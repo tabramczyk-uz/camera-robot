@@ -1,10 +1,10 @@
 package com.example.camerarobot
 
 import android.os.Bundle
-import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -12,29 +12,26 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.camerarobot.ui.theme.CameraRobotTheme
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URL
 
 class MainActivity : ComponentActivity() {
+    private val viewModel: ESP32ViewModel by viewModels()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
             CameraRobotTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    Main(modifier = Modifier.padding(innerPadding))
+                    Main(
+                        viewModel = viewModel,
+                        modifier = Modifier.padding(innerPadding)
+                    )
                 }
             }
         }
@@ -42,10 +39,8 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun Main(modifier: Modifier = Modifier) {
-    val TAG = "CamRobot"
-    var response by remember { mutableStateOf("") }
-    val scope = rememberCoroutineScope()
+fun Main(viewModel: ESP32ViewModel, modifier: Modifier = Modifier) {
+    val esp32State by viewModel.esp32State.collectAsState()
 
     Column(
         modifier = modifier
@@ -53,33 +48,19 @@ fun Main(modifier: Modifier = Modifier) {
             .padding(16.dp)
     ) {
         Button(
-            onClick = {
-                response = "Connecting..."
-
-                scope.launch(Dispatchers.IO) {
-                    try {
-                        val url = URL("http://10.124.98.42/status")
-                        val connection = url.openConnection() as HttpURLConnection
-                        connection.requestMethod = "GET"
-                        connection.connectTimeout = 5000
-
-                        val responseCode = connection.responseCode
-                        if (responseCode == HttpURLConnection.HTTP_OK) {
-                            val inputStream = connection.inputStream
-                            val newResponse = inputStream.bufferedReader().use { it.readText() }
-                            Log.i(TAG, "Response: $newResponse")
-
-                            response = newResponse
-                        }
-                    } catch (e: IOException) {
-                        response = e.message ?: "Unexpected error"
-                    }
-                }
-            }
+            onClick = { viewModel.getStatus() }
         ) {
-            Text("Button")
+            Text("Get status")
         }
-        Text("Response: $response")
+        Text("Status: ${esp32State.status}")
+
+        if (esp32State.status == ESP32Status.CONNECTED) {
+            Button(
+                onClick = { viewModel.toggleLed() }
+            ) {
+                Text("Toggle LED")
+            }
+        }
     }
 }
 
@@ -88,7 +69,7 @@ fun Main(modifier: Modifier = Modifier) {
 fun GreetingPreview() {
     CameraRobotTheme {
         Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-            Main(modifier = Modifier.padding(innerPadding))
+            Main(viewModel = ESP32ViewModel(), modifier = Modifier.padding(innerPadding))
         }
     }
 }
