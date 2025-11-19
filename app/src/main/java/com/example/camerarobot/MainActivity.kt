@@ -15,11 +15,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.camerarobot.ui.theme.CameraRobotTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -41,6 +45,7 @@ class MainActivity : ComponentActivity() {
 fun Main(modifier: Modifier = Modifier) {
     val TAG = "CamRobot"
     var response by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
 
     Column(
         modifier = modifier
@@ -49,17 +54,26 @@ fun Main(modifier: Modifier = Modifier) {
     ) {
         Button(
             onClick = {
-                val url = URL("http://10.124.98.42/status")
-                val connection = url.openConnection() as HttpURLConnection
-                connection.requestMethod = "GET"
+                response = "Connecting..."
 
-                val responseCode = connection.responseCode
-                if (responseCode == HttpURLConnection.HTTP_OK) {
-                    val inputStream = connection.inputStream
-                    val newResponse = inputStream.bufferedReader().use { it.readText() }
-                    Log.i(TAG, "Response: $newResponse")
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        val url = URL("http://10.124.98.42/status")
+                        val connection = url.openConnection() as HttpURLConnection
+                        connection.requestMethod = "GET"
+                        connection.connectTimeout = 5000
 
-                    response = newResponse
+                        val responseCode = connection.responseCode
+                        if (responseCode == HttpURLConnection.HTTP_OK) {
+                            val inputStream = connection.inputStream
+                            val newResponse = inputStream.bufferedReader().use { it.readText() }
+                            Log.i(TAG, "Response: $newResponse")
+
+                            response = newResponse
+                        }
+                    } catch (e: IOException) {
+                        response = e.message ?: "Unexpected error"
+                    }
                 }
             }
         ) {
