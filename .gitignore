@@ -13,3 +13,5 @@
 .externalNativeBuild
 .cxx
 local.properties
+.idea/copilotDiffState.xml
+.idea/copilot.data.migration.ask2agent.xml

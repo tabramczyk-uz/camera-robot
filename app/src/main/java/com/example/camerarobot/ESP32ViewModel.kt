@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import com.example.camerarobot.Global.ESP32_BASE_URL
 import com.example.camerarobot.Global.TAG
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -18,57 +20,90 @@ class ESP32ViewModel : ViewModel() {
     private val _esp32State = MutableStateFlow(ESP32State())
     val esp32State: StateFlow<ESP32State> = _esp32State.asStateFlow()
 
+    private var motorAJob: Job? = null
+    private var motorBJob: Job? = null
+
+    private companion object {
+        const val HTTP_TIMEOUT = 5000
+        const val MOTOR_DEBOUNCE_DELAY = 100L // milliseconds
+    }
+
     fun getStatus() {
-        viewModelScope.launch(Dispatchers.IO) {
-            _esp32State.value = _esp32State.value.copy(status = ESP32Status.CONNECTING)
+        _esp32State.value = _esp32State.value.copy(status = ESP32Status.CONNECTING)
 
-            val result = try {
-                val url = URL("$ESP32_BASE_URL/status")
-                val connection = url.openConnection() as HttpURLConnection
-                connection.requestMethod = "GET"
-                connection.connectTimeout = 5000
-                connection.readTimeout = 5000
-
-                val responseCode = connection.responseCode
-                if (responseCode == HttpURLConnection.HTTP_OK) {
-                    val inputStream = connection.inputStream
-                    val newResponse = inputStream.bufferedReader().use { it.readText() }
-                    Log.v(TAG, "Response: $newResponse")
-
-                    ESP32Status.CONNECTED
-                } else {
-                    Log.e(TAG, "Error: $responseCode")
-                    ESP32Status.ERROR
-                }
-            } catch (e: IOException) {
-                Log.e(TAG, "Error: ${e.message}")
-                ESP32Status.ERROR
-            }
-
-            _esp32State.value = _esp32State.value.copy(status = result)
+        sendRequest("/status") { response ->
+            _esp32State.value = _esp32State.value.copy(status = ESP32Status.CONNECTED)
+            Log.v(TAG, "Status response: $response")
         }
     }
 
     fun toggleLed() {
-        viewModelScope.launch(Dispatchers.IO) {
-            _esp32State.value = _esp32State.value.copy(isLedEnabled = !_esp32State.value.isLedEnabled)
-            val brightness = if (_esp32State.value.isLedEnabled) 1 else 0
+        val newState = !_esp32State.value.isLedEnabled
+        _esp32State.value = _esp32State.value.copy(isLedEnabled = newState)
+        val brightness = if (newState) 1 else 0
 
+        sendRequest(
+            url = "/control?var=led_intensity&val=$brightness",
+            logMessage = "LED brightness set to: $brightness"
+        )
+    }
+
+    fun setMotorA(forward: Boolean, speed: Int) {
+        motorAJob?.cancel()
+        motorAJob = viewModelScope.launch {
+            delay(MOTOR_DEBOUNCE_DELAY)
+            setMotor("motor_a", forward, speed)
+        }
+    }
+
+    fun setMotorB(forward: Boolean, speed: Int) {
+        motorBJob?.cancel()
+        motorBJob = viewModelScope.launch {
+            delay(MOTOR_DEBOUNCE_DELAY)
+            setMotor("motor_b", forward, speed)
+        }
+    }
+
+    private fun setMotor(motorVar: String, forward: Boolean, speed: Int) {
+        val speedBits = speed.coerceIn(0, 0x7F) // bits 0-6 (0..127)
+        val forwardBit = if (forward) 0 else (1 shl 7) // bit 7
+        val packedValue = forwardBit or speedBits
+
+        sendRequest(
+            url = "/control?var=$motorVar&val=$packedValue",
+            logMessage = "${motorVar.uppercase()} set to: forward=$forward speed=$speed packed=$packedValue"
+        )
+    }
+
+    private fun sendRequest(
+        url: String,
+        logMessage: String = "",
+        onSuccess: (String) -> Unit = {}
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
-                val url = URL("$ESP32_BASE_URL/control?var=led_intensity&val=$brightness")
-                val connection = url.openConnection() as HttpURLConnection
-                connection.requestMethod = "GET"
-                connection.connectTimeout = 5000
-                connection.readTimeout = 5000
+                val fullUrl = URL("$ESP32_BASE_URL$url")
+                val connection = fullUrl.openConnection() as HttpURLConnection
+                connection.apply {
+                    requestMethod = "GET"
+                    connectTimeout = HTTP_TIMEOUT
+                    readTimeout = HTTP_TIMEOUT
+                }
 
                 val responseCode = connection.responseCode
                 if (responseCode == HttpURLConnection.HTTP_OK) {
-                    Log.i(TAG, "LED toggled successfully")
+                    val response = connection.inputStream.bufferedReader().use { it.readText() }
+                    if (logMessage.isNotEmpty()) {
+                        Log.i(TAG, logMessage)
+                    }
+                    onSuccess(response)
                 } else {
-                    Log.e(TAG, "Error: $responseCode")
+                    Log.e(TAG, "HTTP Error: $responseCode for $url")
+                    _esp32State.value = _esp32State.value.copy(status = ESP32Status.ERROR)
                 }
             } catch (e: IOException) {
-                Log.e(TAG, "Error: ${e.message}")
+                Log.e(TAG, "Request failed: ${e.message}")
+                _esp32State.value = _esp32State.value.copy(status = ESP32Status.ERROR)
             }
         }
     }
